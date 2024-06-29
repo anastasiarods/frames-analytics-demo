@@ -17,7 +17,7 @@
     "@remix-run/css-bundle": "^2.9.1",
     "@remix-run/react": "^2.9.1",
     "add": "^2.0.6",
-    "frames.js": "^0.17.0",
+    "frames.js": "^0.17.1",
     "isbot": "^4.1.0",
     "nanoid": "^5.0.7",
     "react": "^18.2.0",

@@ -41,9 +41,7 @@ export async function identifyUser({
     event: "$identify",
     distinct_id: distinctId,
     properties: {
-      $set: {
-        userProperties,
-      },
+      $set: userProperties,
     },
   };
   const response = await fetch(url, {

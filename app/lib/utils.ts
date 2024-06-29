@@ -1,6 +1,5 @@
 import { Frame } from "frames.js";
 import { nanoid } from "nanoid";
-import { LINKS } from "./constants";
 
 export function getFrameMetadata(frame: Frame) {
   const buttons =
@@ -78,7 +77,7 @@ export async function wrapUrl(
 ) {
   //   // Parse the original URL
   const parsedUrl: URL = new URL(originalUrl);
-  const wrappedUrl: URL = new URL(analyticsDomain + "/api/a/");
+  const wrappedUrl: URL = new URL(analyticsDomain + "/a/");
 
   const id = await saveUrl(originalUrl, kv);
 
@@ -87,4 +86,24 @@ export async function wrapUrl(
   wrappedUrl.searchParams.set("u", parsedUrl.pathname);
 
   return wrappedUrl.toString();
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function wrapLinksInFrame(ogFrame: Frame, host: string, kv: any) {
+  const frame = { ...ogFrame };
+
+  if (frame.postUrl) {
+    frame.postUrl = await wrapUrl(host, frame.postUrl, kv);
+  }
+
+  if (frame.buttons) {
+    for (let i = 0; i < frame.buttons.length; i++) {
+      const url = frame.buttons[i].target;
+      if (url && frame.buttons[i].action != "link") {
+        frame.buttons[i].target = await wrapUrl(host, url, kv);
+      }
+    }
+  }
+
+  return frame;
 }

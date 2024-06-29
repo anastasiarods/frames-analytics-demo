@@ -1,6 +1,5 @@
 import { type ActionFunctionArgs } from "@remix-run/cloudflare";
-import { getFrame } from "frames.js";
-import { saveUrl, wrapUrl } from "~/lib/utils";
+import { wrapUrl } from "~/lib/utils";
 
 interface CreateFramePayload {
   url: string;
@@ -17,9 +16,9 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
       // console.log(html);
       // const frame = getFrame({ htmlString: html, url });
 
-      // @ts-expect-error - This is a Cloudflare Worker KV namespace
+      //@ts-expect-error - this is a cloudflare worker
       const { HOST_URL } = context.cloudflare.env;
-      //@ts-expect-error - This is a Cloudflare Worker KV namespace
+      //@ts-expect-error - this is a cloudflare worker
       const { MY_KV } = context.cloudflare.env;
       const newUrl = await wrapUrl(HOST_URL, url, MY_KV);
 
