@@ -1,16 +1,21 @@
-const endpoint = "https://eu.i.posthog.com";
-const apiKey = "";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const euEndpoint = "https://eu.i.posthog.com";
+const usEndpoint = "https://us.i.posthog.com";
 
 export async function captureEvent({
   distinctId,
   eventName,
   properties,
+  apiKey,
+  region,
 }: {
   distinctId: string;
   eventName: string;
-  properties: Record<string, string>;
+  properties: Record<string, any>;
+  apiKey: string;
+  region: string;
 }) {
-  const url = `${endpoint}/capture/`;
+  const url = `${region === "us" ? usEndpoint : euEndpoint}/capture/`;
   const body = {
     api_key: apiKey,
     event: eventName,
@@ -31,11 +36,18 @@ export async function captureEvent({
 export async function identifyUser({
   distinctId,
   userProperties,
+  apiKey,
+  region,
 }: {
   distinctId: string;
-  userProperties: Record<string, string>;
+  userProperties: Record<string, any>;
+  apiKey: string;
+  region: string;
 }) {
-  const url = `${endpoint}/capture/`;
+  const url = `${region === "us" ? usEndpoint : euEndpoint}/capture/`;
+
+  console.log("url", url);
+
   const body = {
     api_key: apiKey,
     event: "$identify",
@@ -58,11 +70,15 @@ export async function identifyUser({
 export async function margeIds({
   distinctId,
   newDistinctId,
+  apiKey,
+  region,
 }: {
   distinctId: string;
   newDistinctId: string;
+  apiKey: string;
+  region: string;
 }) {
-  const url = `${endpoint}/capture/`;
+  const url = `${region === "us" ? usEndpoint : euEndpoint}/capture/`;
   const body = {
     api_key: apiKey,
     event: "$create_alias",

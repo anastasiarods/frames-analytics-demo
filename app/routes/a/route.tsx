@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { type ActionFunctionArgs } from "@remix-run/cloudflare";
 import {
   FrameActionPayload,
@@ -5,87 +6,99 @@ import {
   getFrameHtml,
   validateFrameMessage,
 } from "frames.js";
-import { wrapLinksInFrame, wrapUrl } from "~/lib/utils";
+import { wrapLinksInFrame } from "~/lib/utils";
 import { captureEvent, identifyUser } from "./posthog";
 import { fetchHubContext } from "~/lib/frameUtils.server";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const session: Record<string, any> = {};
 
-async function extractOgUrl(url: URL, kv: any) {
-  const redirectHostId = url.searchParams.get("r");
-  const redirectHost = await kv.get(redirectHostId);
-  const redirectPath = url.searchParams.get("u");
-  return new URL(`https://${redirectHost}${redirectPath}`);
+function getPrevButtons(fid: string, postId: string) {
+  if (session[`${postId}:${fid}`]) {
+    return session[`${postId}:${fid}`];
+  }
+  return session[postId];
 }
 
-async function trackFrameAction(body: FrameActionPayload, postUrl: string) {
-  const fid = body.untrustedData.fid;
-  const cast = body.untrustedData.castId;
-  const buttonIndex = body.untrustedData.buttonIndex;
-  let prevButtons = session[fid.toString()];
-  const castUrl = `https://warpcast.com/~/conversations/${cast.hash}`;
+async function trackFrameAction({
+  body,
+  postUrl,
+  postId,
+  apiKey,
+  region,
+}: {
+  body: FrameActionPayload;
+  postUrl: string;
+  postId: string;
+  apiKey: string;
+  region: string;
+}) {
+  const { fid, castId, buttonIndex, inputText } = body.untrustedData;
+  const prevButtons = getPrevButtons(fid.toString(), postId);
+  const castUrl = `https://warpcast.com/~/conversations/${castId.hash}`;
+  const button = prevButtons ? prevButtons[buttonIndex - 1] : null;
 
-  if (!prevButtons && postUrl) {
-    prevButtons = session[postUrl];
-  }
-
-  let button;
-  if (prevButtons) {
-    button = prevButtons[buttonIndex - 1];
-  }
-
-  const r = await captureEvent({
+  await captureEvent({
+    region,
+    apiKey,
     distinctId: fid.toString(),
     eventName: "frame_click",
     properties: {
-      castHash: cast.hash,
+      castHash: castId.hash,
       buttonIndex: buttonIndex.toString(),
       castUrl: castUrl,
       buttonLabel: button?.label,
       postUrl: postUrl,
+      inputText: inputText,
     },
   });
-
-  console.log(r);
 }
 
-async function trackExternalLinkClick(
-  body: FrameActionPayload,
-  link: string,
-  postUrl: string
-) {
-  const fid = body.untrustedData.fid;
-  const cast = body.untrustedData.castId;
-  const buttonIndex = body.untrustedData.buttonIndex;
-  const prevButtons = session[fid.toString()];
-  const castUrl = `https://warpcast.com/~/conversations/${cast.hash}`;
+async function trackExternalLinkClick({
+  body,
+  link,
+  postUrl,
+  postId,
+  apiKey,
+  region,
+}: {
+  body: FrameActionPayload;
+  link: string;
+  postUrl: string;
+  postId: string;
+  apiKey: string;
+  region: string;
+}) {
+  const { fid, castId, buttonIndex, inputText } = body.untrustedData;
+  const prevButtons = getPrevButtons(fid.toString(), postId);
+  const castUrl = `https://warpcast.com/~/conversations/${castId.hash}`;
+  const button = prevButtons ? prevButtons[buttonIndex - 1] : null;
 
-  let button;
-  if (prevButtons) {
-    button = prevButtons[buttonIndex - 1];
-  }
-
-  console.log(postUrl);
-
-  const r = await captureEvent({
+  await captureEvent({
+    region,
+    apiKey,
     distinctId: fid.toString(),
     eventName: "frame_click_link",
     properties: {
-      castHash: cast.hash,
+      castHash: castId.hash,
       castUrl: castUrl,
       buttonIndex: buttonIndex.toString(),
       buttonLabel: button?.label,
       postUrl: postUrl,
       link: link,
+      inputText: inputText,
     },
   });
-
-  console.log(r);
 }
 
-async function identify(body: FrameActionPayload) {
-  console.log("Identifying user", body);
+async function identify({
+  body,
+  apiKey,
+  region,
+}: {
+  body: FrameActionPayload;
+  apiKey: string;
+  region: string;
+}) {
   const { isValid, message } = await validateFrameMessage(body);
 
   if (!isValid) {
@@ -97,14 +110,16 @@ async function identify(body: FrameActionPayload) {
   const cast = message?.data.frameActionBody.castId;
 
   if (message?.data.fid && cast && !session[fid]) {
-    let hubContext = session[`${fid}-data`];
+    let hubContext = session[`${fid}:data`];
 
     if (!hubContext) {
       hubContext = await fetchHubContext(fid, cast);
-      session[`${fid}-data`] = hubContext;
+      session[`${fid}:data`] = hubContext;
     }
 
     await identifyUser({
+      region,
+      apiKey,
       distinctId: fid.toString(),
       userProperties: {
         verifiedAddresses: JSON.stringify(
@@ -131,14 +146,15 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
   const { MY_KV } = context.cloudflare.env;
 
   try {
+    //Get request only for the first frame
     if (request.method === "GET") {
       const url = new URL(request.url);
-      const redirect = await extractOgUrl(url, MY_KV);
+      const id = url.searchParams.get("r");
+      const redirect = await MY_KV.get(id);
       const html = await fetch(redirect).then((res) => res.text());
-      const ogFrame = getFrame({ htmlString: html, url: redirect.toString() });
-      const postId = url.searchParams.get("r");
+      const ogFrame = getFrame({ htmlString: html, url: redirect });
 
-      if (!ogFrame || !ogFrame.frame || ogFrame.status !== "success") {
+      if (!ogFrame || ogFrame.status !== "success" || id === null) {
         return new Response(html, {
           headers: {
             "Content-Type": "text/html",
@@ -146,14 +162,33 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
         });
       }
 
-      const frame = await wrapLinksInFrame(ogFrame.frame, HOST_URL, MY_KV);
+      const frame = await wrapLinksInFrame({
+        ogFrame: ogFrame.frame,
+        host: HOST_URL,
+        ogId: id,
+        kv: MY_KV,
+      });
+
       const frameHtml = getFrameHtml(frame);
+      if (frame.postUrl && frame.buttons) {
+        session[id] = frame.buttons;
+        const firstFrame = new URL(frame?.postUrl).search;
+        //save the link of the first frame
+        await MY_KV.put(`${id}:first`, firstFrame);
+      }
 
-      if (frame.postUrl && frame.buttons && postId)
-        session[redirect.href] = frame.buttons;
+      const scriptString = `<Script
+        id="my-script"
+        strategy="beforeInteractive"
+      >{typeof window !== "undefined" && window.location.replace("${redirect}")}</Script>`;
 
-      //refirect
-      return new Response(frameHtml, {
+      //add script to redirect to the original page after <html> tag
+      const frameHtmlWithScript = frameHtml.replace(
+        "<html>",
+        `<html>${scriptString}`
+      );
+
+      return new Response(frameHtmlWithScript, {
         headers: {
           "Content-Type": "text/html",
         },
@@ -162,9 +197,20 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
 
     if (request.method === "POST") {
       const body: FrameActionPayload = await request.json();
+
       const url = new URL(request.url);
-      const redirect = await extractOgUrl(url, MY_KV);
+      const nextId = url.searchParams.get("n");
+      const ogId = url.searchParams.get("r");
+      const redirect = await MY_KV.get(nextId);
       const fid = body.untrustedData.fid;
+      const region = await MY_KV.get(`${ogId}:region`);
+
+      //if it is request to the first frame, delete the prev session
+      const firstFrameUrl = await MY_KV.get(`${ogId}:first`);
+      if (firstFrameUrl === url.search) {
+        //delete prev session
+        delete session[`${ogId}:${fid}`];
+      }
 
       const response = await fetch(redirect, {
         method: "POST",
@@ -177,16 +223,24 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
       });
 
       const html = await response.text();
-      const ogFrame = getFrame({ htmlString: html, url: redirect.toString() });
+      const ogFrame = getFrame({ htmlString: html, url: redirect });
+      const apiKey = await MY_KV.get(`${ogId}:apiKey`);
 
       try {
-        if (!session[`${fid}-data`]) await identify(body);
+        if (!session[`${fid}:data`]) await identify({ body, apiKey, region });
       } catch (error) {
         console.error("Error identifying user", error);
       }
 
       if (response.redirected) {
-        await trackExternalLinkClick(body, response.url, redirect.href);
+        await trackExternalLinkClick({
+          body,
+          link: response.url,
+          postUrl: redirect,
+          postId: ogId || "",
+          apiKey: apiKey,
+          region,
+        });
         return new Response("Redirected", {
           status: 302,
           headers: {
@@ -195,7 +249,7 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
         });
       }
 
-      if (!ogFrame || !ogFrame.frame || ogFrame.status !== "success") {
+      if (!ogFrame || ogFrame.status !== "success" || ogId === null) {
         return new Response(html, {
           headers: {
             "Content-Type": "text/html",
@@ -203,12 +257,22 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
         });
       }
 
-      const frame = await wrapLinksInFrame(ogFrame.frame, HOST_URL, MY_KV);
+      const frame = await wrapLinksInFrame({
+        ogFrame: ogFrame.frame,
+        host: HOST_URL,
+        ogId,
+        kv: MY_KV,
+      });
+
       const frameHtml = getFrameHtml(frame);
-
-      await trackFrameAction(body, redirect.href);
-
-      if (frame.postUrl && frame.buttons) session[fid] = frame.buttons;
+      await trackFrameAction({
+        body,
+        postUrl: redirect,
+        postId: ogId || "",
+        apiKey: apiKey,
+        region,
+      });
+      if (frame.buttons) session[`${ogId}:${fid}`] = frame.buttons;
 
       return new Response(frameHtml, {
         headers: {

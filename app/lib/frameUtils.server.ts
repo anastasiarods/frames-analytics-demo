@@ -1,22 +1,5 @@
 import { DEFAULT_HUB_API_KEY, DEFAULT_HUB_API_URL } from "./constants";
 import { getAddressesForFid, getUserDataForFid } from "frames.js";
-import { createPublicClient, http, parseAbi } from "viem";
-import { optimism } from "viem/chains";
-
-async function ffff(fid: number) {
-  const publicClient = createPublicClient({
-    transport: http(),
-    chain: optimism,
-  });
-  const address = await publicClient.readContract({
-    abi: parseAbi(["function custodyOf(uint256 fid) view returns (address)"]),
-    // IdRegistry contract address
-    address: "0x00000000fc6c5f01fc30151999387bb99a9f489b",
-    functionName: "custodyOf",
-    args: [BigInt(fid)],
-  });
-  return { address, type: "custody" };
-}
 
 const hubHttpUrl = DEFAULT_HUB_API_URL;
 const hubRequestOptions = {
@@ -46,8 +29,6 @@ export async function fetchHubContext(
     hash: Uint8Array;
   }
 ) {
-
-  // console.log("fetchHubContext", await ffff(requesterFid));
 
   const [
     requesterFollowsCaster,

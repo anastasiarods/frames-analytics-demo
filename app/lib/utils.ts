@@ -1,5 +1,5 @@
 import { Frame } from "frames.js";
-import { nanoid } from "nanoid";
+import { saveUrl } from "./db";
 
 export function getFrameMetadata(frame: Frame) {
   const buttons =
@@ -52,58 +52,45 @@ export function getFrameMetadata(frame: Frame) {
       : []),
   ];
 }
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function saveUrl(url: string, kv: any) {
-  const urlObj = new URL(url);
-  const host = urlObj.host;
-  const stored = await kv.get(host);
-
-  if (stored) {
-    return kv.get(host);
+export function wrapUrl(
+  analyticsDomain: string,
+  ogId: string,
+  nextId?: string
+) {
+  if (nextId) {
+    return `${analyticsDomain}/a/?r=${ogId}&n=${nextId}`;
   }
 
-  const id = nanoid(6);
-  kv.put(id, host);
-  kv.put(host, id);
-  return id;
+  return `${analyticsDomain}/a/?r=${ogId}`;
 }
 
-export async function wrapUrl(
-  analyticsDomain: string,
-  originalUrl: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  kv: any
-) {
-  //   // Parse the original URL
-  const parsedUrl: URL = new URL(originalUrl);
-  const wrappedUrl: URL = new URL(analyticsDomain + "/a/");
-
-  const id = await saveUrl(originalUrl, kv);
-
-  // Add the original URL as a parameter
-  wrappedUrl.searchParams.set("r", id);
-  wrappedUrl.searchParams.set("u", parsedUrl.pathname);
-
-  return wrappedUrl.toString();
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function wrapLinksInFrame(ogFrame: Frame, host: string, kv: any) {
+export async function wrapLinksInFrame({
+  ogFrame,
+  host,
+  ogId,
+  kv,
+}: {
+  ogFrame: Frame;
+  host: string;
+  ogId: string;
+  kv: unknown;
+}) {
   const frame = { ...ogFrame };
 
   if (frame.postUrl) {
-    frame.postUrl = await wrapUrl(host, frame.postUrl, kv);
+    const id = await saveUrl(frame.postUrl, kv);
+    frame.postUrl = wrapUrl(host, ogId, id);
   }
 
-  if (frame.buttons) {
-    for (let i = 0; i < frame.buttons.length; i++) {
-      const url = frame.buttons[i].target;
-      if (url && frame.buttons[i].action != "link") {
-        frame.buttons[i].target = await wrapUrl(host, url, kv);
-      }
-    }
-  }
+  // if (frame.buttons) {
+  //   for (let i = 0; i < frame.buttons.length; i++) {
+  //     const url = frame.buttons[i].target;
+  //     if (url && frame.buttons[i].action === "tx") {
+  //       const id = await saveUrl(url, kv);
+  //       frame.buttons[i].target = wrapUrl(host, ogId, id);
+  //     }
+  //   }
+  // }
 
   return frame;
 }

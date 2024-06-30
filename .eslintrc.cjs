@@ -24,6 +24,11 @@ module.exports = {
   // Base config
   extends: ["eslint:recommended"],
 
+  // Rules
+  rules: {
+     "@typescript-eslint/no-explicit-any": "warn",
+  },
+
   overrides: [
     // React
     {
