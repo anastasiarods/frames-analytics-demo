@@ -8,7 +8,7 @@ import type { AppLoadContext, EntryContext } from "@remix-run/cloudflare";
 import { RemixServer } from "@remix-run/react";
 import { isbot } from "isbot";
 import { renderToReadableStream } from "react-dom/server";
-import { Buffer } from "node:buffer";
+import { Buffer } from "buffer";
 
 globalThis.Buffer = Buffer;
 
