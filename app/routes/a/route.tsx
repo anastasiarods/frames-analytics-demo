@@ -10,13 +10,28 @@ import { wrapLinksInFrame } from "~/lib/utils";
 import { captureEvent, identifyUser } from "./posthog";
 import { fetchHubContext } from "~/lib/frameUtils.server";
 
-const session: Record<string, any> = {};
+// const session: Record<string, any> = {};
 
-function getPrevButtons(fid: string, postId: string) {
-  if (session[`${postId}:${fid}`]) {
-    return session[`${postId}:${fid}`];
+async function getPrevButtons(fid: string, postId: string, kv: any) {
+  const session = await kv.get(`${postId}:${fid}`);
+  if (session) {
+    return JSON.parse(session);
   }
-  return session[postId];
+  const b = await kv.get(`${postId}:buttons`);
+  if (b) {
+    return JSON.parse(b);
+  }
+}
+
+interface TrackPayload {
+  body: FrameActionPayload;
+  postUrl: string;
+  ogPostUrl: string;
+  postId: string;
+  apiKey: string;
+  region: string;
+  link?: string;
+  kv: any;
 }
 
 async function trackFrameAction({
@@ -25,19 +40,15 @@ async function trackFrameAction({
   postId,
   apiKey,
   region,
-}: {
-  body: FrameActionPayload;
-  postUrl: string;
-  postId: string;
-  apiKey: string;
-  region: string;
-}) {
+  ogPostUrl,
+  kv,
+}: TrackPayload) {
   const { fid, castId, buttonIndex, inputText } = body.untrustedData;
-  const prevButtons = getPrevButtons(fid.toString(), postId);
+  const prevButtons = await getPrevButtons(fid.toString(), postId, kv);
   const castUrl = `https://warpcast.com/~/conversations/${castId.hash}`;
   const button = prevButtons ? prevButtons[buttonIndex - 1] : null;
 
-  await captureEvent({
+  const resp = await captureEvent({
     region,
     apiKey,
     distinctId: fid.toString(),
@@ -47,10 +58,13 @@ async function trackFrameAction({
       buttonIndex: buttonIndex.toString(),
       castUrl: castUrl,
       buttonLabel: button?.label,
-      postUrl: postUrl,
-      inputText: inputText,
+      postUrl,
+      inputText,
+      ogPostUrl,
     },
   });
+
+  console.log("Frame action", resp);
 }
 
 async function trackExternalLinkClick({
@@ -60,20 +74,15 @@ async function trackExternalLinkClick({
   postId,
   apiKey,
   region,
-}: {
-  body: FrameActionPayload;
-  link: string;
-  postUrl: string;
-  postId: string;
-  apiKey: string;
-  region: string;
-}) {
+  ogPostUrl,
+  kv,
+}: TrackPayload) {
   const { fid, castId, buttonIndex, inputText } = body.untrustedData;
-  const prevButtons = getPrevButtons(fid.toString(), postId);
+  const prevButtons = await getPrevButtons(fid.toString(), postId, kv);
   const castUrl = `https://warpcast.com/~/conversations/${castId.hash}`;
   const button = prevButtons ? prevButtons[buttonIndex - 1] : null;
 
-  await captureEvent({
+  const resp = await captureEvent({
     region,
     apiKey,
     distinctId: fid.toString(),
@@ -83,21 +92,25 @@ async function trackExternalLinkClick({
       castUrl: castUrl,
       buttonIndex: buttonIndex.toString(),
       buttonLabel: button?.label,
-      postUrl: postUrl,
-      link: link,
-      inputText: inputText,
+      postUrl,
+      ogPostUrl,
+      link,
+      inputText,
     },
   });
+  console.log("External link click", resp);
 }
 
 async function identify({
   body,
   apiKey,
   region,
+  kv,
 }: {
   body: FrameActionPayload;
   apiKey: string;
   region: string;
+  kv: any;
 }) {
   const { isValid, message } = await validateFrameMessage(body);
 
@@ -109,15 +122,14 @@ async function identify({
   const fid = body.untrustedData.fid;
   const cast = message?.data.frameActionBody.castId;
 
-  if (message?.data.fid && cast && !session[fid]) {
-    let hubContext = session[`${fid}:data`];
+  if (message?.data.fid && cast) {
+    const hubContext = await fetchHubContext(fid, cast);
 
-    if (!hubContext) {
-      hubContext = await fetchHubContext(fid, cast);
-      session[`${fid}:data`] = hubContext;
+    if (hubContext) {
+      await kv.put(`${fid}:data`, JSON.stringify(hubContext));
     }
 
-    await identifyUser({
+    const resp = await identifyUser({
       region,
       apiKey,
       distinctId: fid.toString(),
@@ -136,6 +148,7 @@ async function identify({
         ...hubContext.requesterUserData,
       },
     });
+    console.log("Identify user", resp);
   }
 }
 
@@ -171,7 +184,8 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
 
       const frameHtml = getFrameHtml(frame);
       if (frame.postUrl && frame.buttons) {
-        session[id] = frame.buttons;
+        // session[id] = frame.buttons;
+        await MY_KV.put(`${id}:buttons`, JSON.stringify(frame.buttons));
         const firstFrame = new URL(frame?.postUrl).search;
         //save the link of the first frame
         await MY_KV.put(`${id}:first`, firstFrame);
@@ -204,12 +218,14 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
       const redirect = await MY_KV.get(nextId);
       const fid = body.untrustedData.fid;
       const region = await MY_KV.get(`${ogId}:region`);
+      const ogPostUrl = await MY_KV.get(`${ogId}`);
 
       //if it is request to the first frame, delete the prev session
       const firstFrameUrl = await MY_KV.get(`${ogId}:first`);
       if (firstFrameUrl === url.search) {
         //delete prev session
-        delete session[`${ogId}:${fid}`];
+        await MY_KV.delete(`${ogId}:${fid}`);
+        // delete session[`${ogId}:${fid}`];
       }
 
       const response = await fetch(redirect, {
@@ -227,7 +243,8 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
       const apiKey = await MY_KV.get(`${ogId}:apiKey`);
 
       try {
-        if (!session[`${fid}:data`]) await identify({ body, apiKey, region });
+        const session = await MY_KV.get(`${fid}:data`);
+        if (!session) await identify({ body, apiKey, region, kv: MY_KV });
       } catch (error) {
         console.error("Error identifying user", error);
       }
@@ -240,6 +257,8 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
           postId: ogId || "",
           apiKey: apiKey,
           region,
+          ogPostUrl,
+          kv: MY_KV,
         });
         return new Response("Redirected", {
           status: 302,
@@ -271,8 +290,13 @@ const handleRequest = async ({ request, context }: ActionFunctionArgs) => {
         postId: ogId || "",
         apiKey: apiKey,
         region,
+        ogPostUrl,
+        kv: MY_KV,
       });
-      if (frame.buttons) session[`${ogId}:${fid}`] = frame.buttons;
+      // if (frame.buttons) session[`${ogId}:${fid}`] = frame.buttons;
+      if (frame.buttons) {
+        await MY_KV.put(`${ogId}:${fid}`, JSON.stringify(frame.buttons));
+      }
 
       return new Response(frameHtml, {
         headers: {
